@@ -191,3 +191,179 @@ Begin Transaction
 Commit Transaction
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+USE [PDLERP]
+GO
+/****** Object:  StoredProcedure [dbo].[spSet_FS_RollReceive]    Script Date: 11/14/2022 12:05:37 AM ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+ 
+
+ALTER Procedure [dbo].[spSet_FS_RollReceive](
+    @SaveOption Int = -1,
+	@RCVID INT = -1,
+	@RCVDATE datetime = null,
+	@FFTR_NO VARCHAR(100) = '',
+	@SendForApproval BIT = 0,
+	@APPROVED BIT = 0,
+	@REJECT BIT = 0,
+	@RejectReason VARCHAR(100) = '',
+    @USER_BY varchar(100) = '',
+    @IdentityValue Int OutPut,
+    @ErrNo int output
+	,@TMP_FS_ReceiveChilds AS TMP_FS_ReceiveChilds READONLY 
+)
+AS
+Begin Transaction
+    Declare @Insert Int = 1, @Update Int = 2, @Approve Int = 3, @Rejected Int = 5;
+	Declare @GetDateTime DateTime = GETDATE();
+    SET @IdentityValue = 0; Set @ErrNo = 0; 
+
+    IF(@SaveOption = @Insert) -- 1
+    BEGIN
+		
+		Declare @RCVID_Tmp Int = 0;
+		Select Top 1 @RCVID_Tmp = RCVID From F_FS_FABRIC_RCV_MASTER
+		Where CONVERT(date,RCVDATE) = CONVERT(date,@RCVDATE)
+
+		If Not Exists
+		(
+			Select RCVID From F_FS_FABRIC_RCV_MASTER Where CONVERT(date,RCVDATE) = CONVERT(date,@RCVDATE)
+		)
+		Begin
+			--Save
+			Insert Into F_FS_FABRIC_RCV_MASTER(RCVDATE, FFTR_NO, CreatedBy, CreatedDate, SendForApproval, SendForApprovalBy, SendForApprovalDate)
+			VALUES(CONVERT(date,@RCVDATE),@FFTR_NO,  @USER_BY, @GetDateTime, @SendForApproval, @USER_BY, @GetDateTime)		
+			SET @IdentityValue = @@IDENTITY
+			If @@Error !=0
+			Begin
+				Rollback Transaction
+				Set @ErrNo = -1
+			End
+		End
+		Else
+		Begin
+			Set @IdentityValue = @RCVID_Tmp
+
+		End
+		
+
+        Insert Into F_FS_FABRIC_RCV_DETAILS(RCVID, FABCODE, SO_NO, PO_NO, ROLL_ID, QTY_YARDS, BALANCE_QTY,IS_QC_APPROVE,QC_APPROVE_DATE,IS_QC_REJECT,QC_REJECT_DATE,REMARKS, CreatedBy, CreatedDate)
+		Select  @IdentityValue,FABCODE, SO_NO, PO_NO, ROLL_ID, QTY_YARDS, BALANCE_QTY,IS_QC_APPROVE,QC_APPROVE_DATE,IS_QC_REJECT,QC_REJECT_DATE,REMARKS , @USER_BY, @GetDateTime
+		From @TMP_FS_ReceiveChilds
+		Where InputFlag = 0 And CreatedBy = @USER_BY
+
+		If @@Error !=0
+        Begin
+            Rollback Transaction
+            Set @ErrNo = -1
+        End
+    END
+	Else IF(@SaveOption = @Update) -- 2
+    BEGIN 
+        Update F_FS_FABRIC_RCV_MASTER Set 
+		FFTR_NO=@FFTR_NO,
+		REJECT = 0,
+		UpdatedBy = @USER_BY, 
+		UpdatedDate = @GetDateTime, 
+		SendForApproval = @SendForApproval,
+		SendForApprovalBy = @USER_BY, 	
+		SendForApprovalDate = @GetDateTime  
+        Where RCVID = @RCVID
+
+        Set @IdentityValue = @RCVID
+        If @@Error !=0
+        Begin
+            Rollback Transaction
+            Set @ErrNo = -1
+        End 
+		 
+		Update F_FS_FABRIC_RCV_DETAILS Set IsDeleted = 1  
+		Where RCVID = @RCVID And 
+		RCVID Not In 
+		(
+			Select TRNSID
+			From @TMP_FS_ReceiveChilds id 
+			Where F_FS_FABRIC_RCV_DETAILS.TRNSID = id.TRNSID And id.CreatedBy = @USER_BY 
+		) 
+		If @@Error !=0
+        Begin
+            Rollback Transaction
+            Set @ErrNo = -1
+        End  
+
+		Insert Into F_FS_FABRIC_RCV_DETAILS(RCVID, FABCODE, SO_NO, PO_NO, ROLL_ID, QTY_YARDS, BALANCE_QTY,IS_QC_APPROVE,QC_APPROVE_DATE,IS_QC_REJECT,QC_REJECT_DATE,REMARKS, CreatedBy, CreatedDate)
+		Select  @IdentityValue, FABCODE, SO_NO, PO_NO, ROLL_ID, QTY_YARDS, BALANCE_QTY,IS_QC_APPROVE,QC_APPROVE_DATE,IS_QC_REJECT,QC_REJECT_DATE,REMARKS , @USER_BY, @GetDateTime
+		From @TMP_FS_ReceiveChilds
+		Where InputFlag = 0 And CreatedBy = @USER_BY
+
+		If @@Error !=0
+        Begin
+            Rollback Transaction
+            Set @ErrNo = -1
+        End  
+
+		Update F_FS_FABRIC_RCV_DETAILS Set 
+		RCVID = t.RCVID, 
+		UpdatedBy = @USER_BY,
+	    UpdatedDate = @GetDateTime 
+		From F_FS_FABRIC_RCV_DETAILS CHILD, @TMP_FS_ReceiveChilds t
+		Where CHILD.TRNSID = t.TRNSID And t.InputFlag = 1 And t.CreatedBy = @USER_BY
+		If @@Error !=0
+        Begin
+            Rollback Transaction
+            Set @ErrNo = -1
+        End 
+    END  
+	Else IF(@SaveOption = @Approve) -- 3
+    BEGIN 
+        Update F_FS_FABRIC_RCV_MASTER Set 
+		APPROVED = 1,	
+		ApprovedBy = @USER_BY,
+		ApprovedDate = @GetDateTime  
+        Where RCVID = @RCVID
+
+        Set @IdentityValue = @RCVID
+        If @@Error !=0
+        Begin
+            Rollback Transaction
+            Set @ErrNo = -1
+        End 
+    END 
+
+	Else IF(@SaveOption = @Rejected) -- 4
+    BEGIN 
+        Update F_FS_FABRIC_RCV_MASTER Set 
+		REJECT = 1,	
+		RejectReason = @RejectReason,	
+		RejectBy = @USER_BY,
+		RejectDate = @GetDateTime  ,
+		SendForApproval= 0
+        Where RCVID = @RCVID
+
+        Set @IdentityValue = @RCVID
+        If @@Error !=0
+        Begin
+            Rollback Transaction
+            Set @ErrNo = -1
+        End 
+    END  
+Commit Transaction
+

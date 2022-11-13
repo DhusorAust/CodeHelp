@@ -1,0 +1,193 @@
+
+---[spSet_SampleRequisition] 
+
+ALTER PROCEDURE [dbo].[spSet_SampleRequisition](
+	@dsxmlu1 xml = null,
+    @SaveOption Int = null,
+	@SampleRequisitionMasterID int = -1,
+	@RequisitionDate datetime=null,
+	@SRNo varchar(100)=null,
+	@MarchandiserName varchar(100)=null,
+	@BuyerID int = -1,
+	@BrandID int = -1,
+	@MarketingID int = -1,
+    @USER_BY varchar(100) = '',
+    @IdentityValue Int OutPut,
+    @ErrNo int output,
+	@SendForApproval  bit=0,
+	@Approved bit=0,
+	@Reject bit=0,
+	@RejectReason nvarchar(150) = ''
+)
+AS
+Begin Transaction
+        
+    Declare @Insert Int = 1, @Update Int = 2, @Approve Int = 3, @Rejected Int = 4;
+	Declare @GetDateTime DateTime = getdate(),@BakIdentity int=0;
+
+    SET @IdentityValue = 0; Set @ErrNo = 0; 
+	
+		SELECT 
+		t.value('SampleRequisitionChildsID[1]','nvarchar(200)')as SampleRequisitionChildsID,
+		t.value('SampleRequisitionMasterID[1]','nvarchar(200)')as SampleRequisitionMasterID,
+		t.value('ProcessDateChilds[1]','nvarchar(150)')as ProcessDateChilds,
+		t.value('Fabcode[1]','nvarchar(150)')as Fabcode,
+		t.value('RequisitionQty[1]','nvarchar(150)')as RequisitionQty,
+		t.value('SampleTypeID[1]','nvarchar(150)')as SampleTypeID,
+		t.value('Remarks[1]','nvarchar(150)')as Remarks,
+		t.value('CreatedBy[1]','nvarchar(150)')as CreatedBy,
+		t.value('CreatedDate[1]','nvarchar(150)')as CreatedDate
+
+		into #TemptblSampleRequisition from
+		@dsxmlu1.nodes('/dsSampleRequisition/tblSampleRequisitionChilds')as temptable(t)
+
+	--Main Part
+
+    IF(@SaveOption = @Insert) -- 1 
+    BEGIN  
+	 
+        INSERT INTO SampleBayRequisitionMaster(RequisitionDate,SRNo,MarchandiserName,BuyerID,BrandID,MarketingID,SendForApproval,CreatedBy, CreatedDate) 
+                                   VALUES(@RequisitionDate,@SRNo,@MarchandiserName,@BuyerID,@BrandID,@MarketingID,@SendForApproval,@USER_BY,@GetDateTime)
+                
+		SET @IdentityValue = @@IDENTITY
+
+        If @@Error !=0
+        Begin
+            Rollback Transaction
+            Set @ErrNo = -1
+        End 
+
+		---Details
+		INSERT INTO SampleBayRequisitionChilds
+		      (SampleRequisitionMasterID,Fabcode,RequisitionQty,SampleTypeID,Remarks,CreatedBy,CreatedDate)
+		Select @IdentityValue,Fabcode,RequisitionQty,SampleTypeID,Remarks,@USER_BY, @GetDateTime
+		From #TemptblSampleRequisition
+		Where SampleRequisitionChildsID = 0 
+
+		   If @@Error !=0
+        Begin
+            Rollback Transaction
+            Set @ErrNo = -1
+        End 
+
+    END
+
+    Else IF(@SaveOption = @Update) -- 2
+    BEGIN
+        Update SampleBayRequisitionMaster 
+		Set	RequisitionDate = @RequisitionDate,
+		SRNo=@SRNo,
+		MarchandiserName=@MarchandiserName,
+		BuyerID=@BuyerID,
+		BrandID=@BrandID,
+		MarketingID=@MarketingID,
+		UpdatedBy = @USER_BY,
+		UpdatedDate = @GetDateTime,
+		SendForApproval=@SendForApproval
+        Where SampleRequisitionMasterID = @SampleRequisitionMasterID
+
+        Set @IdentityValue = @SampleRequisitionMasterID
+
+        If @@Error !=0
+        Begin
+            Rollback Transaction
+            Set @ErrNo = -1
+        End
+
+		--Details Update
+		Update SampleBayRequisitionChilds SET DELETED=1  From SampleBayRequisitionChilds Where NOT EXISTS
+		(
+			Select * From #TemptblSampleRequisition id
+			Where SampleBayRequisitionChilds.SampleRequisitionChildsID = id.SampleRequisitionChildsID and SampleBayRequisitionChilds.SampleRequisitionMasterID=@IdentityValue
+		)  and SampleRequisitionMasterID=@IdentityValue
+		If @@Error !=0
+        Begin
+            Rollback Transaction
+            Set @ErrNo = -1
+        End
+
+	
+
+		INSERT INTO dbo.SampleBayRequisitionChilds
+		      (SampleRequisitionMasterID,Fabcode,RequisitionQty,SampleTypeID,Remarks,CreatedBy,CreatedDate)
+		Select  @IdentityValue,Fabcode,RequisitionQty,SampleTypeID,Remarks,@USER_BY, @GetDateTime
+		From #TemptblSampleRequisition
+		Where SampleRequisitionChildsID = 0 
+
+		   If @@Error !=0
+        Begin
+            Rollback Transaction
+            Set @ErrNo = -1
+        End 
+		
+		UPDATE dbo.SampleBayRequisitionChilds
+		     SET 
+			 SampleRequisitionMasterID=@IdentityValue,
+			 Fabcode=T.Fabcode,
+			 RequisitionQty=T.RequisitionQty,
+			 SampleTypeID=T.SampleTypeID,
+			 Remarks=T.Remarks,
+			 UpdatedBy=@USER_BY,
+			 UpdatedDate=@GetDateTime
+
+		From SampleBayRequisitionChilds D , #TemptblSampleRequisition T
+		Where D.SampleRequisitionChildsID = T.SampleRequisitionChildsID AND T.SampleRequisitionChildsID>0
+
+        If @@Error !=0
+        Begin
+            Rollback Transaction
+            Set @ErrNo = -1
+        End 
+    END  
+
+		--IF(@SaveOption = @Approve) -- 3
+		--BEGIN 
+		--	Update ACC_EXPORT_DOMASTER Set 
+		--	Approved = 1,	
+		--	APPROVED_BY = @USER_BY,
+		--	APPROVED_DATE = @GetDateTime ,
+		--	AUDITBY=@USER_BY,
+		--	AUDITON=@GetDateTime,
+		--	COMMENTS=@COMMENTS
+		--	Where TRNSID = @TRNSID
+
+		--	Set @IdentityValue = @TRNSID
+		--	SET @DoNo1=@DONO
+
+		--	If @@Error !=0
+		--	Begin
+		--		Rollback Transaction
+		--		Set @ErrNo = -1
+		--	End 
+		--END
+
+		--IF(@SaveOption = @Rejected) -- 5
+		--BEGIN 
+		--	Update ACC_EXPORT_DOMASTER Set 
+		--	Approved = 0,	
+		--	APPROVED_BY = @USER_BY,
+		--	APPROVED_DATE = @GetDateTime ,
+		--	AUDITBY=@USER_BY,
+		--	AUDITON=@GetDateTime,
+		--	COMMENTS=@COMMENTS,
+		--	IS_CANCELLED=1,
+		--	Reject=1,
+		--	REJECT_BY=@USER_BY,
+		--	REJECT_DATE=@GetDateTime,
+		--	RejectReason=@COMMENTS
+		--	Where TRNSID = @TRNSID
+
+		--	Set @IdentityValue = @TRNSID
+		--	SET @DoNo1=@DONO
+
+		--	If @@Error !=0
+		--	Begin
+		--		Rollback Transaction
+		--		Set @ErrNo = -1
+		--	End 
+		--END
+
+		drop table #TemptblSampleRequisition
+Commit Transaction
+
+

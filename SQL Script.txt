@@ -373,3 +373,273 @@ SELECT *
 FROM INFORMATION_SCHEMA.COLUMNS
 WHERE TABLE_NAME = N'F_PR_FN_CHEMICAL_CONSUMPTION'
 
+
+
+
+
+
+
+
+
+
+
+
+USE [PDLERP]
+GO
+/****** Object:  StoredProcedure [dbo].[spSet_FIN_MachinePreparation]    Script Date: 11/19/2022 6:27:20 AM ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+ALTER PROCEDURE [dbo].[spSet_FIN_MachinePreparation](
+	@dsxmlu1 xml = null,
+	@dsxmlu2 xml = null,
+    @SaveOption Int = null,
+	@MachinePreparationID int = -1,
+	@MachineID int = -1,
+	@Fabcode int = -1,
+	@FinishTypeID int = -1,
+	@MachinePreparationDate datetime=null,
+	@FinishRoute varchar(256)=null,
+	@Remarks varchar(100)=null,
+	@MarketingID int = -1,
+    @USER_BY varchar(100) = '',
+    @IdentityValue Int OutPut,
+    @ErrNo int output,
+	@SendForApproval  bit=0,
+	@Approved bit=0,
+	@Reject bit=0,
+	@RejectReason nvarchar(150) = ''
+)
+AS
+Begin Transaction
+        
+    Declare @Insert Int = 1, @Update Int = 2, @Approve Int = 3, @Rejected Int = 4;
+	Declare @GetDateTime DateTime = getdate(),@BakIdentity int=0;
+
+    SET @IdentityValue = 0; Set @ErrNo = 0; 
+	
+		SELECT 
+		t.value('MachineDoffID[1]','nvarchar(200)')as MachineDoffID,
+		t.value('MachinePreparationID[1]','nvarchar(200)')as MachinePreparationID,
+		t.value('FinishingProcessMasterID[1]','nvarchar(150)')as FinishingProcessMasterID,
+		t.value('Remarks[1]','nvarchar(150)')as Remarks,
+		t.value('CreatedBy[1]','nvarchar(150)')as CreatedBy,
+		t.value('CreatedDate[1]','nvarchar(150)')as CreatedDate
+
+		into #TemptblMachinePreparation from
+		@dsxmlu1.nodes('/dsMachinePreparation/tblDoffChilds
+		
+		')as temptable(t)
+
+
+
+		SELECT 
+		m.value('MachineChemicalConsumptionID[1]','nvarchar(200)')as MachineChemicalConsumptionID,
+		m.value('MachineChemicalConsumptionDate[1]','nvarchar(200)')as MachineChemicalConsumptionDate,
+		m.value('MachinePreparationID[1]','nvarchar(150)')as MachinePreparationID,
+		m.value('ChemicalProductID[1]','nvarchar(150)')as ChemicalProductID,
+		m.value('Qty[1]','nvarchar(150)')as Qty,
+		m.value('Remarks[1]','nvarchar(150)')as Remarks,
+		m.value('CreatedBy[1]','nvarchar(150)')as CreatedBy,
+		m.value('CreatedDate[1]','nvarchar(150)')as CreatedDate
+
+		into #TemptblMachinePreparation2 from
+		@dsxmlu2.nodes('/dsMachinePreparation2/tblchemicalChilds
+		
+		')as temptable(m)
+
+
+
+
+	--Main Part
+
+    IF(@SaveOption = @Insert) -- 1 
+    BEGIN  
+	 
+        INSERT INTO FIN_MachinePreparationMaster(Fabcode,MachineID,FinishTypeID,FinishRoute,MachinePreparationDate,Remarks,SendForApproval,CreatedBy, CreatedDate) 
+                                   VALUES(@Fabcode,@MachineID,@FinishTypeID,@FinishRoute,@MachinePreparationDate,@Remarks,@SendForApproval,@USER_BY,@GetDateTime)
+                
+		SET @IdentityValue = @@IDENTITY
+
+        If @@Error !=0
+        Begin
+            Rollback Transaction
+            Set @ErrNo = -1
+        End 
+
+		---Details
+		INSERT INTO FIN_MachineDoffChilds
+		      (MachinePreparationID,FinishingProcessMasterID,Remarks,CreatedBy,CreatedDate)
+		Select @IdentityValue,FinishingProcessMasterID,Remarks,@USER_BY, @GetDateTime
+		From #TemptblMachinePreparation
+		Where MachineDoffID = 0 
+
+		---Details 2
+
+		INSERT INTO FIN_MachineChemicalConsumption
+		      (MachinePreparationID,MachineChemicalConsumptionDate,ChemicalProductID,Qty,Remarks,CreatedBy,CreatedDate)
+		Select @IdentityValue,MachineChemicalConsumptionDate,ChemicalProductID,Qty,Remarks,@USER_BY, @GetDateTime
+		From #TemptblMachinePreparation2
+		Where MachineChemicalConsumptionID = 0 
+
+		   If @@Error !=0
+        Begin
+            Rollback Transaction
+            Set @ErrNo = -1
+        End 
+
+    END
+
+    Else IF(@SaveOption = @Update) -- 2
+    BEGIN
+        Update FIN_MachinePreparationMaster 
+		Set	Fabcode = @Fabcode,
+		MachineID=@MachineID,
+		FinishTypeID=@FinishTypeID,
+		FinishRoute=@FinishRoute,
+		MachinePreparationDate=@MachinePreparationDate,
+		Remarks=@Remarks,
+		UpdatedBy = @USER_BY,
+		UpdatedDate = @GetDateTime,
+		SendForApproval=@SendForApproval
+        Where MachinePreparationID = @MachinePreparationID
+
+        Set @IdentityValue = @MachinePreparationID
+
+        If @@Error !=0
+        Begin
+            Rollback Transaction
+            Set @ErrNo = -1
+        End
+
+		--Details Update
+		Update FIN_MachineDoffChilds SET DELETED=1  From FIN_MachineDoffChilds Where NOT EXISTS
+		(
+			Select * From #TemptblMachinePreparation id
+			Where FIN_MachineDoffChilds.MachineDoffID = id.MachineDoffID and FIN_MachineDoffChilds.MachinePreparationID=@IdentityValue
+		)  and MachinePreparationID=@IdentityValue
+
+
+		--Details Update 2
+		Update FIN_MachineChemicalConsumption SET DELETED=1  From FIN_MachineChemicalConsumption Where NOT EXISTS
+		(
+			Select * From #TemptblMachinePreparation2 id
+			Where FIN_MachineChemicalConsumption.MachineChemicalConsumptionID = id.MachineChemicalConsumptionID and FIN_MachineChemicalConsumption.MachinePreparationID=@IdentityValue
+		)  and MachinePreparationID=@IdentityValue
+
+
+
+		If @@Error !=0
+        Begin
+            Rollback Transaction
+            Set @ErrNo = -1
+        End
+
+	
+	    --Details Insert 1
+		INSERT INTO dbo.FIN_MachineDoffChilds
+		      (MachinePreparationID,FinishingProcessMasterID,Remarks,Remarks,CreatedBy,CreatedDate)
+		Select  @IdentityValue,FinishingProcessMasterID,Remarks,Remarks,@USER_BY, @GetDateTime
+		From #TemptblMachinePreparation
+		Where MachineDoffID = 0 
+
+
+		 --Details Insert 2
+		INSERT INTO FIN_MachineChemicalConsumption
+		      (MachinePreparationID,MachineChemicalConsumptionDate,ChemicalProductID,Qty,Remarks,CreatedBy,CreatedDate)
+		Select @IdentityValue,MachineChemicalConsumptionDate,ChemicalProductID,Qty,Remarks,@USER_BY, @GetDateTime
+		From #TemptblMachinePreparation2
+		Where MachineChemicalConsumptionID = 0 
+
+
+
+		   If @@Error !=0
+        Begin
+            Rollback Transaction
+            Set @ErrNo = -1
+        End 
+		
+		UPDATE dbo.FIN_MachineDoffChilds
+		     SET 
+			 MachinePreparationID=@IdentityValue,
+			 FinishingProcessMasterID=T.FinishingProcessMasterID,
+			 Remarks=T.Remarks,
+			 Remarks=T.Remarks,
+			 UpdatedBy=@USER_BY,
+			 UpdatedDate=@GetDateTime
+
+		From FIN_MachineDoffChilds D , #TemptblMachinePreparation T
+		Where D.MachineDoffID = T.MachineDoffID AND T.MachineDoffID>0
+
+		UPDATE dbo.FIN_MachineChemicalConsumption
+		     SET 
+			 MachinePreparationID=@IdentityValue,
+			 MachineChemicalConsumptionDate=M.MachineChemicalConsumptionDate,
+			 ChemicalProductID=M.ChemicalProductID,
+			 Qty=M.Qty,
+			 Remarks=M.Remarks,
+			 UpdatedBy=@USER_BY,
+			 UpdatedDate=@GetDateTime
+
+		From FIN_MachineChemicalConsumption D , #TemptblMachinePreparation2 M
+		Where D.MachineChemicalConsumptionID = M.MachineChemicalConsumptionID AND M.MachineChemicalConsumptionID>0
+
+        If @@Error !=0
+        Begin
+            Rollback Transaction
+            Set @ErrNo = -1
+        End 
+    END  
+
+		--IF(@SaveOption = @Approve) -- 3
+		--BEGIN 
+		--	Update ACC_EXPORT_DOMASTER Set 
+		--	Approved = 1,	
+		--	APPROVED_BY = @USER_BY,
+		--	APPROVED_DATE = @GetDateTime ,
+		--	AUDITBY=@USER_BY,
+		--	AUDITON=@GetDateTime,
+		--	COMMENTS=@COMMENTS
+		--	Where TRNSID = @TRNSID
+
+		--	Set @IdentityValue = @TRNSID
+		--	SET @DoNo1=@DONO
+
+		--	If @@Error !=0
+		--	Begin
+		--		Rollback Transaction
+		--		Set @ErrNo = -1
+		--	End 
+		--END
+
+		--IF(@SaveOption = @Rejected) -- 5
+		--BEGIN 
+		--	Update ACC_EXPORT_DOMASTER Set 
+		--	Approved = 0,	
+		--	APPROVED_BY = @USER_BY,
+		--	APPROVED_DATE = @GetDateTime ,
+		--	AUDITBY=@USER_BY,
+		--	AUDITON=@GetDateTime,
+		--	COMMENTS=@COMMENTS,
+		--	IS_CANCELLED=1,
+		--	Reject=1,
+		--	REJECT_BY=@USER_BY,
+		--	REJECT_DATE=@GetDateTime,
+		--	RejectReason=@COMMENTS
+		--	Where TRNSID = @TRNSID
+
+		--	Set @IdentityValue = @TRNSID
+		--	SET @DoNo1=@DONO
+
+		--	If @@Error !=0
+		--	Begin
+		--		Rollback Transaction
+		--		Set @ErrNo = -1
+		--	End 
+		--END
+
+		drop table #TemptblMachinePreparation
+Commit Transaction
+
+

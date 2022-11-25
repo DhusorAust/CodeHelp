@@ -643,3 +643,7 @@ Begin Transaction
 Commit Transaction
 
 
+Select  DENSE_RANK() OVER (ORDER BY w.CardNo) SLNO,
+	W.CardNo
+
+

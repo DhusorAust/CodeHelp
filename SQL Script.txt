@@ -844,3 +844,29 @@ Begin Transaction
 Commit Transaction
 
 
+
+Select  ReceiveChildsID, BatchNo +' Stock '+ convert(varchar(50),Sum(Qty)) as BatchNo From
+            (
+		            Select B.ReceiveChildsID, B.BatchNo, sum(B.ReceiveQty)  As Qty 
+		            FROM CS_ReceiveMaster D
+		            Inner Join CS_ReceiveChilds B ON D.ReceiveMasterID = B.ReceiveMasterID
+		            Inner join CS_RequirementChilds C on B.ProductID=C.ProductID
+		            Inner Join CS_RequirementMaster F on C.RequirementMasterID=F.RequirementMasterID
+		            Where D.Approved = 1 and F.RequirementMasterID={id}
+		            group by B.ReceiveQty,B.BatchNo,B.ReceiveChildsID 
+		
+		            union All
+
+		            Select C.ReceiveChildsID, G.BatchNo, -sum(C.IssueQty) As Qty
+		            FROM CS_IssueMaster E
+		            Inner Join CS_IssueChilds C ON E.IssueMasterID = C.IssueMasterID
+		            Inner join CS_RequirementChilds D on D.ProductID=C.ProductID
+		            Inner Join CS_RequirementMaster F on D.RequirementMasterID=F.RequirementMasterID
+		            inner join CS_ReceiveChilds G on G.ReceiveChildsID=C.ReceiveChildsID
+		            Where E.Approved = 1 And F.RequirementMasterID={id}
+
+		            group by C.IssueQty,C.ReceiveChildsID,G.BatchNo
+
+            )Result
+
+            group by  BatchNo,ReceiveChildsID";

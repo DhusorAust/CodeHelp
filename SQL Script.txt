@@ -870,3 +870,262 @@ Select  ReceiveChildsID, BatchNo +' Stock '+ convert(varchar(50),Sum(Qty)) as Ba
             )Result
 
             group by  BatchNo,ReceiveChildsID";
+
+
+
+
+
+
+USE [PDLERP26DEC2022]
+GO
+/****** Object:  StoredProcedure [dbo].[spSet_InspectionDailyDataEntry]    Script Date: 1/26/2023 5:45:02 AM ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+ 
+ALTER PROCEDURE [dbo].[spSet_InspectionDailyDataEntry](
+	@dsxmlu1 xml = null,
+    @SaveOption Int = null,
+	@SETID int = -1,
+	@INSPID int  =null,
+	@ROLLNO varchar(100) = '',
+	@ROLL_INSPDATE datetime=null, 
+	@TROLLEYNO int =null,
+	@OPERATOR_ID int =null,
+	@MACHINE_ID int =null,
+	@PICES int =null,
+	@TOTAL_DEFECT int = -1,
+	@CUT_PCS_SECTION int =null,
+	@PROCESS_TYPE int = -1,
+	@DEFECT_NAME int = -1,
+	@ROLL_ID int = -1,
+	@TROLLY_STATUS bit=0,
+	@IS_QC_APPROVE bit=0,
+	@BATCH varchar(100)=null,
+	@LENGTH_1 numeric(18,2)=0,
+	@LENGTH_2 numeric(18,2)=0,
+	@LENGTH_MTR numeric(18,2)=0,
+	@LENGTH_YDS numeric(18,2)=0,
+	@POINT_100SQ numeric(18,2)=0,
+	@ACT_WIDTH_INCH numeric(18,2)=0,
+	@CUT_WIDTH_INCH numeric(18,2)=0,
+	@GR_WEIGHT_KG numeric(18,2)=0,
+	@WEIGHT_DEDUCT numeric(18,2)=0,
+	@NET_WEIGHT_KG numeric(18,2)=0,
+	@ACT_OZ_YDS numeric(18,2)=0,
+	@CUTPCS_YDS numeric(18,2)=0,
+	@ACT_CONS varchar(100)=null,
+	@FAB_GRADE varchar(100)=null,
+	@DEF_PCS varchar(100)=null,
+	@SHIFT varchar(100)=null,
+	@REMARKSChilds varchar(100)=null,
+	@OPT1 varchar(100)=null,
+	@UNMARK_CONTAMINATION varchar(100)=null,
+	@OPT2 varchar(100)=null,
+	@OPT3 varchar(100)=null,
+	@OPT4 varchar(100)=null,
+	@OPT5 varchar(100)=null,
+	@OPT6 varchar(100)=null,
+	@OPT7 varchar(100)=null,
+	@DEFECT_FAULT_STATUS varchar(100)=null,
+	@Approved bit =0,
+    @USER_BY varchar(100) = '',
+    @IdentityValue Int OutPut,
+    @ErrNo int output
+	--@SendForApproval  bit=0,
+	--@Approved bit=0,
+	--@Reject bit=0,
+	--@RejectReason nvarchar(150) = ''
+)
+AS
+Begin Transaction
+        
+    Declare @Insert Int = 1, @Update Int = 2, @Approve Int = 3, @Rejected Int = 4;
+	Declare @GetDateTime DateTime = getdate(),@BakIdentity int=0;
+
+    SET @IdentityValue = 0; Set @ErrNo = 0; 
+	
+		SELECT 
+		t.value('DPID[1]','nvarchar(200)')as DPID,
+		t.value('ROLL_ID[1]','nvarchar(200)')as ROLL_ID,
+		t.value('DEF_TYPEID[1]','nvarchar(150)')as DEF_TYPEID,
+		t.value('POINT1[1]','nvarchar(150)')as POINT1,
+		t.value('POINT2[1]','nvarchar(150)')as POINT2,
+		t.value('POINT3[1]','nvarchar(150)')as POINT3,
+		t.value('POINT4[1]','nvarchar(150)')as POINT4,
+		t.value('DELETED[1]','nvarchar(150)')as DELETED 
+
+		into #TemptblDefectPoint from
+		@dsxmlu1.nodes('/dsInspection/tblInspectionChilds')as temptable(t)
+
+	--Main Part
+
+    IF(@SaveOption = @Insert) -- 1  
+    BEGIN 
+	    Select Top 1 @INSPID = INSPID from F_PR_INSPECTION_PROCESS_MASTER Where SETID = @SetID
+
+		If Isnull(@INSPID,0) = 0 
+		BEGIN 
+			INSERT INTO F_PR_INSPECTION_PROCESS_MASTER(SETID,INSPDATE,CreatedBy,CreatedDate)
+												Values(@SETID,@GetDateTime,@USER_BY,@GetDateTime)
+			SET @INSPID = @@IDENTITY
+			
+			If @@Error !=0
+			Begin
+				Rollback Transaction
+				Set @ErrNo = -1
+			End
+		END 
+		  
+		INSERT INTO F_PR_INSPECTION_PROCESS_DETAILS(INSPID , ROLLNO ,ROLL_INSPDATE ,TROLLEYNO ,OPERATOR_ID ,MACHINE_ID ,PICES ,TOTAL_DEFECT ,CUT_PCS_SECTION ,PROCESS_TYPE ,DEFECT_NAME,TROLLY_STATUS, 
+					IS_QC_APPROVE ,BATCH ,LENGTH_1 ,LENGTH_2 ,LENGTH_MTR ,LENGTH_YDS ,POINT_100SQ ,ACT_WIDTH_INCH ,CUT_WIDTH_INCH ,GR_WEIGHT_KG ,WEIGHT_DEDUCT ,NET_WEIGHT_KG ,ACT_OZ_YDS,
+					CUTPCS_YDS ,ACT_CONS ,FAB_GRADE ,DEF_PCS ,SHIFT ,REMARKSChilds ,OPT1 ,OPT2 ,OPT3 ,OPT4 ,OPT5 ,OPT6 ,OPT7 ,DEFECT_FAULT_STATUS,Approved,
+					CreatedBy,CreatedDate,UpdatedBy,UpdatedDate)
+		VALUES(@INSPID , @ROLLNO ,@ROLL_INSPDATE ,@TROLLEYNO ,@OPERATOR_ID ,@MACHINE_ID ,@PICES ,@TOTAL_DEFECT ,@CUT_PCS_SECTION ,@PROCESS_TYPE ,@DEFECT_NAME,@TROLLY_STATUS, 
+				@IS_QC_APPROVE ,@BATCH ,@LENGTH_1 ,@LENGTH_2 ,@LENGTH_MTR ,@LENGTH_YDS ,@POINT_100SQ ,@ACT_WIDTH_INCH ,@CUT_WIDTH_INCH ,@GR_WEIGHT_KG ,@WEIGHT_DEDUCT ,@NET_WEIGHT_KG ,@ACT_OZ_YDS,
+		@CUTPCS_YDS ,@ACT_CONS ,@FAB_GRADE ,@DEF_PCS ,@SHIFT ,@REMARKSChilds ,@OPT1 ,@OPT2 ,@OPT3 ,@OPT4 ,@OPT5 ,@OPT6 ,@OPT7 ,@DEFECT_FAULT_STATUS ,@Approved,
+		@USER_BY,@GetDateTime,@USER_BY,@GetDateTime)
+                
+		SET @IdentityValue = @@IDENTITY
+
+		If @@Error !=0
+		Begin
+			Rollback Transaction
+			Set @ErrNo = -1
+		End
+		 
+
+		---Details
+		INSERT INTO F_PR_INSPECTION_DEFECT_POINT (ROLL_ID, DEF_TYPEID, POINT1, POINT2, POINT3, POINT4,DELETED)
+		Select @IdentityValue, DEF_TYPEID, POINT1, POINT2, POINT3, POINT4,DELETED
+		From #TemptblDefectPoint
+		Where (DPID = 0) 
+
+		If @@Error !=0
+        Begin
+            Rollback Transaction
+            Set @ErrNo = -1
+        End  
+    END
+
+    Else IF(@SaveOption = @Update) -- 2
+    BEGIN
+
+	    Select Top 1 @INSPID = INSPID from F_PR_INSPECTION_PROCESS_MASTER Where SETID = @SetID
+
+		If Isnull(@INSPID,0) = 0 
+		BEGIN 
+			INSERT INTO F_PR_INSPECTION_PROCESS_MASTER(SETID,INSPDATE,CreatedBy,CreatedDate)
+												Values(@SETID,@GetDateTime,@USER_BY,@GetDateTime)
+			SET @INSPID = @@IDENTITY
+			
+			If @@Error !=0
+			Begin
+				Rollback Transaction
+				Set @ErrNo = -1
+			End
+		END 
+
+        Update F_PR_INSPECTION_PROCESS_DETAILS Set	
+		
+		 INSPID                =@INSPID
+		,ROLLNO 			   =@ROLLNO 
+		,ROLL_INSPDATE 		   =@ROLL_INSPDATE 
+		,TROLLEYNO 			   =@TROLLEYNO 
+		,OPERATOR_ID 		   =@OPERATOR_ID 
+		,MACHINE_ID 		   =@MACHINE_ID 
+		,PICES 				   =@PICES 
+		,TOTAL_DEFECT 		   =@TOTAL_DEFECT 
+		,CUT_PCS_SECTION 	   =@CUT_PCS_SECTION 
+		,PROCESS_TYPE 		   =@PROCESS_TYPE 
+		,DEFECT_NAME		   =@DEFECT_NAME
+		,TROLLY_STATUS		   =@TROLLY_STATUS
+		,IS_QC_APPROVE 		   =@IS_QC_APPROVE 
+		,BATCH 				   =@BATCH 
+		,LENGTH_1 			   =@LENGTH_1 
+		,LENGTH_2 			   =@LENGTH_2 
+		,LENGTH_MTR 		   =@LENGTH_MTR 
+		,LENGTH_YDS			   =@LENGTH_YDS
+		,POINT_100SQ 		   =@POINT_100SQ 
+		,ACT_WIDTH_INCH		   =@ACT_WIDTH_INCH
+		,CUT_WIDTH_INCH 	   =@CUT_WIDTH_INCH 
+		,GR_WEIGHT_KG 		   =@GR_WEIGHT_KG 
+		,WEIGHT_DEDUCT		   =@WEIGHT_DEDUCT
+		,NET_WEIGHT_KG		   =@NET_WEIGHT_KG
+		,ACT_OZ_YDS			   =@ACT_OZ_YDS
+		,CUTPCS_YDS			   =@CUTPCS_YDS
+		,ACT_CONS 			   =@ACT_CONS 
+		,FAB_GRADE 			   =@FAB_GRADE 
+		,DEF_PCS 			   =@DEF_PCS 
+		,SHIFT 				   =@SHIFT 
+		,REMARKSChilds 		   =@REMARKSChilds 
+		,UNMARK_CONTAMINATION  =@UNMARK_CONTAMINATION
+		,OPT1 				   =@OPT1 
+		,OPT2 				   =@OPT2 
+		,OPT3 				   =@OPT3 
+		,OPT4 				   =@OPT4 
+		,OPT5 				   =@OPT5 
+		,OPT6 				   =@OPT6 
+		,OPT7 				   =@OPT7 
+		,DEFECT_FAULT_STATUS   =@DEFECT_FAULT_STATUS
+		,Approved              =@Approved
+
+        Where ROLL_ID = @ROLL_ID
+
+        Set @IdentityValue = @ROLL_ID
+		
+        If @@Error !=0
+        Begin
+            Rollback Transaction
+            Set @ErrNo = -1
+        End
+
+		--Details Update
+		Update F_PR_INSPECTION_DEFECT_POINT SET DELETED=1  From F_PR_INSPECTION_DEFECT_POINT Where NOT EXISTS
+		(
+			Select * From #TemptblDefectPoint id
+			Where F_PR_INSPECTION_DEFECT_POINT.DPID = id.DPID 
+			And F_PR_INSPECTION_DEFECT_POINT.ROLL_ID = @IdentityValue
+		)  and ROLL_ID = @IdentityValue
+		If @@Error !=0
+        Begin
+            Rollback Transaction
+            Set @ErrNo = -1
+        End 
+
+		INSERT INTO F_PR_INSPECTION_DEFECT_POINT (ROLL_ID, DEF_TYPEID, POINT1, POINT2, POINT3, POINT4,DELETED)
+		Select @IdentityValue, DEF_TYPEID, POINT1, POINT2, POINT3, POINT4,DELETED
+		From #TemptblDefectPoint
+		Where DPID = 0
+
+
+		If @@Error !=0
+        Begin
+            Rollback Transaction
+            Set @ErrNo = -1
+        End 
+		
+		UPDATE dbo.F_PR_INSPECTION_DEFECT_POINT
+		     SET 
+			 ROLL_ID=@IdentityValue,
+			 DEF_TYPEID=T.DEF_TYPEID,
+			 POINT1=T.POINT1,
+			 POINT2=T.POINT2,
+			 POINT3=T.POINT3,
+			 POINT4=T.POINT4
+		From F_PR_INSPECTION_DEFECT_POINT D , #TemptblDefectPoint T
+		Where D.DPID = T.DPID AND T.DPID > 0  
+
+        If @@Error !=0
+        Begin
+            Rollback Transaction
+            Set @ErrNo = -1
+        End 
+    END  
+
+	drop table #TemptblDefectPoint
+Commit Transaction
+
+
+
